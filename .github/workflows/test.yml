@@ -1,0 +1,30 @@
+name: test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages (rar extraction, simulator build tools)
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools g++ make bison flex
+      - name: rizin 0.9.1 static release (Ubuntu 24.04 has no package), sha256 checked
+        run: |
+          curl -sSL -o /tmp/rz.tar.xz https://github.com/rizinorg/rizin/releases/download/v0.9.1/rizin-v0.9.1-static-x86_64.tar.xz
+          echo "9102249a9f0b6319c5334a2e5cf8d9cc3f2035e1d3def027c41f6a90f647e8cf  /tmp/rz.tar.xz" | sha256sum -c
+          mkdir -p ~/.local/opt/rizin && tar -xJf /tmp/rz.tar.xz -C ~/.local/opt/rizin
+          echo "$HOME/.local/opt/rizin/bin" >> "$GITHUB_PATH"
+      - name: uCsim, pinned revision
+        uses: actions/cache@v4
+        id: ucsim
+        with:
+          path: ~/.local/opt/ucsim
+          key: ucsim-6f7cf7a-${{ runner.os }}
+      - if: steps.ucsim.outputs.cache-hit != 'true'
+        run: tools/setup-ucsim
+      - name: Ugreen 2018 firmware from its public mirror, sha256 checked
+        run: tools/fetch-ugreen-2018
+      - name: Tests
+        run: rizin -v && S51=$HOME/.local/opt/ucsim/bin/s51 REQUIRE_S51=1 make test

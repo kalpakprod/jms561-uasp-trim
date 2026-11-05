@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Build flashrom with the CH347 programmer and the PUYA P25D40SH chip entry into
+# ~/.local/opt/flashrom-main. Our distribution's flashrom package did not know P25D40SH.
+# Pinned to the upstream commit that wrote and verified every image of this project.
+# Afterwards: export FLASHROM=~/.local/opt/flashrom-main/sbin/flashrom
+set -euo pipefail
+REV=92cf193231931ebde2f3c60e912e0bf890b8b17e
+PREFIX=${PREFIX:-$HOME/.local/opt/flashrom-main}
+SRC=${SRC:-$HOME/.cache/flashrom-src}
+
+command -v meson >/dev/null || { echo "need git, meson, ninja, pkg-config, libusb-1.0 headers (Arch: meson ninja libusb; Debian/Ubuntu: meson ninja-build pkg-config libusb-1.0-0-dev)"; exit 1; }
+if [ ! -d "$SRC/.git" ]; then
+  git clone https://github.com/flashrom/flashrom "$SRC"
+fi
+git -C "$SRC" fetch --quiet origin
+git -C "$SRC" checkout --quiet "$REV"
+grep -q '"P25D40SH"' "$SRC/flashchips/puya.c"
+
+cd "$SRC"
+meson setup build --reconfigure --prefix "$PREFIX" -Dprogrammer=ch347_spi,dummy -Dtests=disabled -Ddocumentation=disabled -Dman-pages=disabled
+meson compile -C build
+meson install -C build
+"$PREFIX/sbin/flashrom" --version | head -1
+
+# CH347T for the logged-in user; the distro flashrom package already ships this line
+# in /usr/lib/udev/rules.d/70-flashrom.rules, the rule below only covers its absence.
+RULE=/etc/udev/rules.d/70-ch347.rules
+if ! grep -qs '55db' /usr/lib/udev/rules.d/70-flashrom.rules "$RULE"; then
+  echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55db", TAG+="uaccess"' | sudo tee "$RULE" >/dev/null
+  sudo udevadm control --reload-rules
+fi

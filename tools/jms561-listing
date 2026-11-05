@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# 8051 listing of CPU ranges of one JMS561U code window, by rizin (correct relative jumps).
+#   jms561-listing <512 KiB image> <bank 0|1> <start>:<end> [<start>:<end>...]   (hex CPU, end exclusive)
+set -euo pipefail
+img=$1 bank=$2; shift 2
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+dd if="$img" of="$t/w2.bin" bs=65536 skip=$((bank * 2 + 1)) count=1 status=none
+for r in "$@"; do
+  s=$((${r%%:*})) e=$((${r##*:}))
+  printf '; ---- CPU %#06x..%#06x\n' "$s" "$e"
+  rizin -a 8051 -q -c "e scr.color=0; e asm.lines=false; e asm.bytes=true; pD $((e - s)) @ $s" "$t/w2.bin" 2>/dev/null
+done

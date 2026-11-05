@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Read-only snapshot of a running JMS561U enclosure (USB 152d:1561): USB link, driver
+# (uas or usb-storage), product string ("JMS56T Series" = the TRIM image runs) and every
+# answer Linux uses to decide on TRIM, for each disk behind the bridge.
+#   jms561-status [out.txt]      needs sg3_utils; run as root or a user with access to /dev/sg*
+set -uo pipefail
+out=${1:-/dev/stdout}
+{
+  echo "== $(date -Is) $(hostname)"
+  dev=$(grep -l '^1561$' /sys/bus/usb/devices/*/idProduct 2>/dev/null | while read -r f; do
+          d=${f%/idProduct}; [ "$(cat "$d/idVendor")" = 152d ] && echo "$d"; done | head -1)
+  [ -n "$dev" ] || { echo "152d:1561 not on USB (enclosure off, no disk in a bay, or not booting)"; exit 1; }
+  echo "usb $(basename "$dev") speed $(cat "$dev/speed") Mb/s bcdDevice $(cat "$dev/bcdDevice") product '$(cat "$dev/product" 2>/dev/null)'"
+  for i in "$dev"/*:*; do [ -e "$i/driver" ] && echo "  iface $(basename "$i") alt $(cat "$i/bAlternateSetting") driver $(basename "$(readlink "$i/driver")")"; done
+  for blk in /sys/block/sd*; do
+    case $(readlink -f "$blk") in *"$(basename "$dev")"*) ;; *) continue ;; esac
+    b=$(basename "$blk")
+    echo "== /dev/$b model '$(cat "$blk/device/model" 2>/dev/null | xargs)' mounts: $(lsblk -no MOUNTPOINTS "/dev/$b" | tr '\n' ' ')"
+    echo "provisioning_mode $(cat "$blk"/device/scsi_disk/*/provisioning_mode 2>/dev/null)  discard_max_bytes $(cat "$blk/queue/discard_max_bytes")  rotational $(cat "$blk/queue/rotational")"
+    for c in "sg_readcap -l" "sg_vpd -p bl" "sg_vpd -p lbpv" "sg_vpd -p bdc"; do
+      echo "-- $c"; $c "/dev/$b" 2>&1 | grep -i -E 'lbpme|lbprz|prov|unmap|lba count|descriptor|lbpu|rotation|error|illegal'
+    done
+  done
+} > "$out"

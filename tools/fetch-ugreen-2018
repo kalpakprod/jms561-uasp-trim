@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Download Ugreen's JMS561U package (firmware 167.1.0.4, 2018) from its public mirror,
+# check its sha256 and extract the 256 KiB firmware into vendor/.
+#
+#   tools/fetch-ugreen-2018 [archive.rar]     use an archive you already downloaded
+#
+# The package is Ugreen's "turn off sleep mode" tool for the CM198. Ugreen's own download
+# page (lulian.cn/download/48-cn.html) now answers 403; the Wayback Machine copy of
+# 2021-08-31 and the GitHub mirror below are the same archive byte for byte.
+set -euo pipefail
+URL="https://raw.githubusercontent.com/xedt/Ugreen_HDD_Case_Turnoff_Sleep_Mode_Tool/main/JMS561U%20Tools%20for%20Turning%20off%20Sleep%20Mode.rar"
+RAR_SHA=b41502a442c57ce375e7a243ec6221dd68b8d058c55b90e0f821ee4071b4b0f2
+BIN=CM198-v167.001.000.004-20180730-meta.bin
+BIN_SHA=57099a24904f87afc5fe8ccd195c554a002eda058ed3e0c111594325243e64e7
+root=$(cd "$(dirname "$0")/.." && pwd)
+out="$root/vendor/$BIN"
+if [ -e "$out" ] && [ "$(sha256sum "$out" | cut -d' ' -f1)" = "$BIN_SHA" ]; then
+  echo "OK $BIN_SHA $out (already there)"; exit 0
+fi
+command -v bsdtar >/dev/null || command -v 7z >/dev/null || { echo "need bsdtar (libarchive) or 7z" >&2; exit 1; }
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+if [ $# -ge 1 ]; then cp "$1" "$t/pkg.rar"; else curl -fsSL --retry 3 -o "$t/pkg.rar" "$URL"; fi
+got=$(sha256sum "$t/pkg.rar" | cut -d' ' -f1)
+[ "$got" = "$RAR_SHA" ] || { echo "archive sha256 $got, expected $RAR_SHA: not the known package" >&2; exit 1; }
+mkdir "$t/x"
+if command -v bsdtar >/dev/null; then bsdtar -xf "$t/pkg.rar" -C "$t/x"; else 7z x -o"$t/x" "$t/pkg.rar" >/dev/null; fi
+src=$(find "$t/x" -name "$BIN" -type f | head -1)
+[ -n "$src" ] || { echo "$BIN not found in the archive" >&2; exit 1; }
+[ "$(sha256sum "$src" | cut -d' ' -f1)" = "$BIN_SHA" ] || { echo "$BIN has an unexpected sha256" >&2; exit 1; }
+mkdir -p "$root/vendor"; install -m 444 "$src" "$out"
+echo "OK $BIN_SHA $out"

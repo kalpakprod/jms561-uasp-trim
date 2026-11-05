@@ -1,0 +1,58 @@
+name: Enclosure report
+description: Tell us how this firmware (or the stock one) behaves on your JMS561 / JMS561U enclosure.
+title: "[report] <enclosure model>, <firmware>"
+labels: [report]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports from other enclosures are the most useful thing you can add. Paste command output as text.
+        Do not paste your disk serial numbers if you prefer to keep them private.
+  - type: input
+    id: model
+    attributes:
+      label: Enclosure brand and model
+      placeholder: Ugreen CM198 / Acasis EC-7352 / Sabrent DS-SC4B / ...
+    validations:
+      required: true
+  - type: input
+    id: lsusb
+    attributes:
+      label: "USB ID and product string (`lsusb | grep 152d`, `cat /sys/bus/usb/devices/*/product`)"
+      placeholder: "152d:1561 JMicron ... JMS56T Series"
+    validations:
+      required: true
+  - type: textarea
+    id: inspect
+    attributes:
+      label: "Output of `tools/jms561_inspect.py` on a read of your flash (it hides the serial number)"
+      description: Read over USB with `jms561u-usb read /dev/sdX 0 0x80000 my-flash.bin` or with the clip. Don't attach the .bin file itself.
+      render: text
+  - type: dropdown
+    id: firmware
+    attributes:
+      label: Firmware in flash
+      options:
+        - stock (not flashed)
+        - Ugreen 2018 167.1.0.4, UASP only (built with --uas-only)
+        - this project's UASP + TRIM image
+        - built with --other-board (Ugreen 2018 code on another board)
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: "Output of `sudo tools/jms561-status`"
+      render: text
+  - type: textarea
+    id: disks
+    attributes:
+      label: Disks in the bays (model, SSD or HDD, size)
+  - type: textarea
+    id: result
+    attributes:
+      label: What works, what does not
+      description: UASP, TRIM / fstrim, speeds, both bays, clone button, sleep, anything odd in `dmesg`.
+    validations:
+      required: true

@@ -1,0 +1,8 @@
+# Ugreen's firmware is downloaded by tools/fetch-ugreen-2018, never committed
+vendor/*.bin
+# flash reads and logs of your own enclosure: they contain its serial number
+backups/
+logs/
+*.bin
+target/
+__pycache__/

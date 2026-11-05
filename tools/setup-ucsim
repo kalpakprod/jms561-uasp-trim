@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Build the uCsim 8051 simulator (s51), used by tests/test_trim_patch.py to execute the patch
+# stubs and the UNMAP guard. Pinned to the upstream commit the tests were written against.
+#   tools/setup-ucsim [prefix]     default prefix ~/.local/opt/ucsim; then export S51=<prefix>/bin/s51
+# Debian/Ubuntu package an older uCsim as sdcc-ucsim; the tests were written against this revision.
+set -euo pipefail
+REV=6f7cf7a
+PREFIX=${1:-$HOME/.local/opt/ucsim}
+SRC=${SRC:-$HOME/.cache/ucsim-src}
+command -v g++ >/dev/null && command -v make >/dev/null || { echo "need git, g++, make" >&2; exit 1; }
+[ -d "$SRC/.git" ] || git clone https://github.com/danieldrotos/ucsim "$SRC"
+git -C "$SRC" fetch --quiet origin
+git -C "$SRC" checkout --quiet "$REV"
+cd "$SRC"
+./configure --prefix="$PREFIX" --disable-z80-port --disable-hc08-port --disable-xa-port \
+  --disable-avr-port --disable-st7-port --disable-stm8-port --disable-pdk-port >/dev/null
+make -j"$(nproc)" >/dev/null
+make install >/dev/null
+"$PREFIX/bin/s51" -v 2>&1 | head -1 || true
+echo "export S51=$PREFIX/bin/s51"

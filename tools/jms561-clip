@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Read and write the SPI flash of a JMS561U enclosure (Ugreen CM198: PUYA P25D40SH, 512 KiB)
+# with a CH347T programmer and a SOIC-8 clip, through flashrom.
+#
+#   jms561-clip read  <label>               two reads, must be equal; prints the sha256
+#   jms561-clip write <image.bin> <sha256>  backup read, write, two read-backs == sha256
+#
+# Whole-chip flashrom sessions through the clip dropped to FF part-way on our board, so
+# every read and write runs as 32 separate 16 KiB sessions with retries. Results land in
+# backups/clip-<time>-<label>/ (or $JMS561_BACKUPS) and are made read-only at once.
+#
+# Environment: FLASHROM (default: flashrom in PATH; it needs the ch347_spi programmer and
+# the P25D40SH chip entry, see tools/setup-flashrom), PROGRAMMER (default ch347_spi),
+# CHIP (default P25D40SH; set it if your board carries another SPI flash).
+set -euo pipefail
+FR=${FLASHROM:-$(command -v flashrom || echo flashrom)}
+CHIP=(-p "${PROGRAMMER:-ch347_spi}" -c "${CHIP:-P25D40SH}")
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+
+die() { echo "jms561-clip: $*" >&2; exit 1; }
+[ -x "$FR" ] || die "no flashrom at $FR (run tools/setup-flashrom)"
+
+layout() {
+  for i in $(seq 0 31); do printf '%08x:%08x r%02d\n' $((i * 0x4000)) $((i * 0x4000 + 0x3fff)) "$i"; done > "$1"
+}
+
+# chunked_read <dir> -> <dir>/full.bin
+chunked_read() {
+  local d=$1 i t
+  mkdir -p "$d/r"; layout "$d/layout.txt"
+  for i in $(seq -w 0 31); do
+    for t in 1 2 3; do
+      "$FR" "${CHIP[@]}" -l "$d/layout.txt" --include "r$i:$d/r/r$i" -r "$d/r/scratch.bin" > "$d/log-r$i.txt" 2>&1 && break
+      [ "$t" = 3 ] && die "read r$i failed 3 times, see $d/log-r$i.txt (clip seated? enclosure power off?)"
+    done
+  done
+  cat "$d"/r/r?? > "$d/full.bin"
+  [ "$(stat -c %s "$d/full.bin")" = 524288 ] || die "read $d is not 512 KiB"
+}
+
+# two_reads <out_dir> -> prints sha256 of the agreed image
+two_reads() {
+  local o=$1
+  chunked_read "$o/pass1"; chunked_read "$o/pass2"
+  cmp -s "$o/pass1/full.bin" "$o/pass2/full.bin" || die "two reads differ: reseat the clip, nothing written"
+  cp "$o/pass1/full.bin" "$o/image.bin"; chmod a-w "$o/image.bin"
+  sha256sum "$o/image.bin" | cut -d' ' -f1
+}
+
+OUT=${JMS561_BACKUPS:-$ROOT/backups}
+newdir() { local d="$OUT/clip-$(date +%Y%m%d-%H%M%S)-$1"; mkdir -p "$d"; echo "$d"; }
+
+case ${1:-} in
+  read)
+    [ $# = 2 ] || die "usage: jms561-clip read <label>"
+    d=$(newdir "$2"); sha=$(two_reads "$d")
+    echo "READ $sha  $d/image.bin"
+    ;;
+  write)
+    [ $# = 3 ] || die "usage: jms561-clip write <image.bin> <sha256>"
+    img=$2; want=$3
+    [ "$(stat -c %s "$img")" = 524288 ] || die "image is not 512 KiB"
+    [ "$(sha256sum "$img" | cut -d' ' -f1)" = "$want" ] || die "image sha256 differs from the one given"
+    d=$(newdir write)
+    before=$(two_reads "$d/before"); echo "BEFORE $before  $d/before/image.bin"
+    # flashrom reads the -w file as a whole chip image (helpers_fileio.c size check),
+    # so pass the full image and select the chunk with --include.
+    layout "$d/layout.txt"
+    for i in $(seq -w 0 31); do
+      for t in 1 2 3; do
+        "$FR" "${CHIP[@]}" -l "$d/layout.txt" --include "r$i" -w "$img" > "$d/log-w$i.txt" 2>&1 && break
+        [ "$t" = 3 ] && die "write r$i failed 3 times, see $d/log-w$i.txt; the chip is partly written, retry the same command"
+      done
+    done
+    after=$(two_reads "$d/after")
+    [ "$after" = "$want" ] || die "read-back $after != $want"
+    echo "VERIFIED $want  $d"
+    ;;
+  *) die "usage: jms561-clip read <label> | write <image.bin> <sha256>" ;;
+esac

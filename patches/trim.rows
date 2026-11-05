@@ -1,0 +1,54 @@
+# TRIM for the JMicron JMS561U (Ugreen CM198), applied to Ugreen's 2018 firmware 167.1.0.4.
+# Turns on JMicron's own SCSI UNMAP -> ATA DATA SET MANAGEMENT (TRIM) path, per drive.
+# Format: <file offset> <bytes before> <bytes after>  # comment
+# File offsets are in copy 0 (CPU address = offset - 0x10000). Copy 1 stays vendor code.
+# Every CRC of copy 0 is recomputed afterwards by tools/jms561u_build.py.
+# Explanation of every row: docs/trim.md
+
+# 1. IDENTIFY post-processing (FUN 0x2519): the TRIM flag XRAM[0x3FA9+port] was hard-zeroed
+#    (CLR A; MOVX @DPTR,A). Call a stub that stores IDENTIFY word 169 bit 0 instead and
+#    re-creates the overwritten MOV DPTR,#0x37B3.
+12527 e4f09037b3 12e3100000   # LCALL 0xE310; NOP; NOP
+
+# 2. Stub at CPU 0xE310 (zero padding after the last vendor code byte 0xE30C).
+#    PUSH DPL; PUSH DPH; MOV DPTR,#0x3752; MOVX A,@DPTR; ANL A,#1; POP DPH; POP DPL;
+#    MOVX @DPTR,A; MOV DPTR,#0x37B3; RET
+1e310 00000000000000000000000000000000000000 c082c083903752e05401d083d082f09037b322
+
+# 3. Stub at CPU 0xE323 for READ CAPACITY(16): keep the original "byte 11 = 0", then set
+#    LBPME (reply byte 14 bit 7, XRAM 0x3A0E) only when the flag of this command's port is set.
+#    CLR A; MOV DPTR,#0x3A0B; MOVX @DPTR,A; MOV A,#0xA9; ADD A,0x43; MOV DPL,A; CLR A;
+#    ADDC A,#0x3F; MOV DPH,A; MOVX A,@DPTR; JZ +6; MOV DPTR,#0x3A0E; MOV A,#0x80;
+#    MOVX @DPTR,A; CLR A; RET
+1e323 000000000000000000000000000000000000000000000000000000 e4903a0bf074a92543f582e4343ff583e06006903a0e7480f0e422
+
+# 4. READ CAPACITY(16) reply (FUN 0x4D59): CLR A; MOV DPTR,#0x3A0B; MOVX @DPTR,A -> call stub 3.
+14e53 e4903a0bf0 12e3230000   # LCALL 0xE323; NOP; NOP
+
+# 5. The vendor reads the flag by LUN (RAM 0x40) but writes it by port (XRAM 0x3513 = RAM 0x43,
+#    port = IRAM[0x4A+LUN]). Read it by port, as RC16 and the UNMAP issue stage already do.
+1177b 40 43   # VPD B0 Block Limits: max unmap LBA count / descriptor count gate
+1182c 40 43   # VPD B2 Logical Block Provisioning: LBPU gate
+1505e 40 43   # UNMAP (0x42) opcode gate
+
+# 6. VPD B1 rotation rate: the vendor reports "non-rotating" when the TRIM flag is set. Use the
+#    vendor's own word-217 table XRAM[0x4B53+port] (1 iff IDENTIFY word 217 == 1) instead, so a
+#    TRIM-capable SMR hard disk is still reported as rotating.
+117b5 74a92540f582e4343f 74532543f582e4344b
+
+# 7. Execution marker: product string "JMS56x Series" -> "JMS56T Series" in copy 0 only.
+1c255 78 54
+
+# 8. UNMAP descriptor validation. Stage 2 (0x2C6A) checks only the parameter
+#    list header, then LJMP 0x2DAD. The vendor parser drops LBA bits 63..48 (aliasing a high LBA
+#    onto a low one) and splits counts >= 65536 in an unqualified loop. Route the accept exit through
+#    a check: LBA bytes 0..1 == 0 and count <= 0xFFC0 (the VPD B0 limit), else the same error exit
+#    the header check uses (0x2CAC: MOV R7,#6; LJMP 0xCFDC -> CHECK CONDITION).
+12cb1 022dad 02e33e   # LJMP 0xE33E
+
+# 9. Stub at CPU 0xE33E:
+#    MOV DPTR,#0x3A08; MOVX; JNZ bad; INC DPTR; MOVX; JNZ bad        ; LBA bits 63..48 must be 0
+#    MOV DPTR,#0x3A10; MOVX; JNZ bad; INC DPTR; MOVX; JNZ bad        ; count bits 31..16 must be 0
+#    INC DPTR; MOVX; CJNE A,#0xFF,ok; INC DPTR; MOVX; SETB C; SUBB A,#0xC0; JNC bad   ; count <= 0xFFC0
+#    ok: LJMP 0x2DAD      bad: LJMP 0x2CAC
+1e33e 0000000000000000000000000000000000000000000000000000000000000000000000000000 903a08e0701da3e07019903a10e07013a3e0700fa3e0b4ff07a3e0d394c05003022dad022cac

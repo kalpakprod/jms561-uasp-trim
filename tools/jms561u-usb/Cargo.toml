@@ -1,0 +1,8 @@
+[package]
+name = "jms561u-usb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "JMicron JMS561U flash access over USB through the vendor SCSI commands (Linux SG_IO); std only"
+
+[dependencies]

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Decompile 8051 functions of one JMS561U code window with Ghidra headless.
+#   jms561-ghidra-decompile <512 KiB image> <bank 0|1> <out.c> <hex cpu addr>...
+# Needs Ghidra (tested with 12.1.4, GHIDRA_INSTALL_DIR) and JDK 21 (JAVA_HOME_21); the project lives in a temp dir.
+set -euo pipefail
+img=$1 bank=$2 out=$3; shift 3
+root=$(cd "$(dirname "$0")/.." && pwd)
+GH=${GHIDRA_INSTALL_DIR:-$HOME/.local/opt/ghidra_12.1.4_PUBLIC}
+export JAVA_HOME=${JAVA_HOME_21:-/usr/lib/jvm/java-21-openjdk}
+t=$(mktemp -d "$HOME/ghidra-jms561-XXXXXX"); trap 'rm -rf "$t"' EXIT
+python3 -I - "$img" "$bank" "$t/w2.bin" <<'PY'
+import sys
+img, bank, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+d = open(img, "rb").read()
+base = bank * 0x20000 + 0x10000
+open(out, "wb").write(d[base:base + 0x10000])
+PY
+"$GH/support/analyzeHeadless" "$t" p -import "$t/w2.bin" -processor 8051:BE:16:default \
+  -scriptPath "$root/tools/ghidra" -preScript Vectors8051.java -postScript Vectors8051.java \
+  -postScript DecompileAt.java "$(realpath -m "$out")" "$@" -deleteProject > "$t/log" 2>&1 \
+  || { tail -20 "$t/log" >&2; exit 1; }
+grep -c "===== request" "$out"
